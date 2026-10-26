@@ -19,13 +19,13 @@ Si eres nuevo, revisa la [Guide](./guide.md) o la
 Instala las dependencias del sitio con `npm install` y compila las etiquetas de las versiones seleccionadas:
 
 ```sh
-npm run website:build:versioned -- --versions v0.4.0,v0.26.0,v0.48.0 --outDir /tmp/atlantis-versioned-docs
+npm run website:build:versioned -- --versions v0.28.0,v0.40.0,v0.48.0 --outDir /tmp/atlantis-versioned-docs
 python3 -m http.server 8081 --bind 127.0.0.1 --directory /tmp/atlantis-versioned-docs
 ```
 
 Abre `http://127.0.0.1:8081/docs/server-configuration.html`. La documentación raíz se compila desde la versión más reciente incluida, indicada con `(latest)` en el selector del encabezado. `Main (next)` abre la documentación de desarrollo. Sin `--versions`, se selecciona el parche más reciente de cada una de las tres versiones menores más recientes disponibles en las etiquetas locales de Git. Obtén las etiquetas que falten antes de compilar.
 
-Usa `--versions all` para compilar todas las etiquetas estables que contienen documentación de configuración, o `--list-versions` para enumerarlas. El selector lee el manifiesto generado, por lo que las nuevas versiones no requieren cambios en el código fuente.
+La documentación por versión comienza en v0.28.0, la primera versión con VitePress. La documentación anterior sigue disponible en las [etiquetas de GitHub](https://github.com/runatlantis/atlantis/tags). Usa `--versions all` para compilar todas las etiquetas estables admitidas, o `--list-versions` para enumerarlas. Se rechazan las versiones explícitas anteriores a v0.28.0. El selector lee el manifiesto generado, por lo que las nuevas versiones no requieren cambios en el código fuente.
 
 Para obtener fechas correctas, ejecuta `node scripts/website/fetch-history.mjs` antes de compilar desde una copia con historial limitado.
 

@@ -19,13 +19,13 @@ If you're new, check out the [Guide](./guide.md) or the
 Install the website dependencies with `npm install`, then build selected release tags:
 
 ```sh
-npm run website:build:versioned -- --versions v0.4.0,v0.26.0,v0.48.0 --outDir /tmp/atlantis-versioned-docs
+npm run website:build:versioned -- --versions v0.28.0,v0.40.0,v0.48.0 --outDir /tmp/atlantis-versioned-docs
 python3 -m http.server 8081 --bind 127.0.0.1 --directory /tmp/atlantis-versioned-docs
 ```
 
 Open `http://127.0.0.1:8081/docs/server-configuration.html`. Root documentation is built from the latest included release, marked `(latest)` in the header selector. `Main (next)` opens development documentation. Without `--versions`, the build selects the newest patch from each of the three most recent minor releases available in local Git tags. Fetch any missing release tags before building.
 
-Use `--versions all` to build every stable tag containing configuration documentation, or `--list-versions` to list them. The selector reads the generated manifest, so new releases require no source edits.
+Versioned documentation starts at v0.28.0, the first VitePress release. Older documentation remains available in [GitHub release tags](https://github.com/runatlantis/atlantis/tags). Use `--versions all` to build every supported stable tag, or `--list-versions` to list them. Explicit versions below v0.28.0 are rejected. The selector reads the generated manifest, so new releases require no source edits.
 
 For accurate page dates, run `node scripts/website/fetch-history.mjs` before building from a shallow checkout.
 

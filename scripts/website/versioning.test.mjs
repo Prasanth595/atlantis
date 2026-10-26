@@ -7,11 +7,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createMarkdownRenderer } from 'vitepress';
 import { configureVersions, flagVersionBadges, historicalLink, historicalSidebar, validateSharedLink, versionedLinks, versionTarget } from '../../runatlantis.io/.vitepress/versioning.mjs';
-import { fetchDocumentationHistory, gitLastUpdated, includeThemeFile, mergePublicAssets } from './build-utils.mjs';
+import { MIN_DOC_VERSION, fetchDocumentationHistory, gitLastUpdated, includeThemeFile, isSupportedRelease, mergePublicAssets } from './build-utils.mjs';
 import { collectSharedPages } from '../../runatlantis.io/.vitepress/shared-pages.mjs';
 
 const source = fileURLToPath(new URL('../../runatlantis.io', import.meta.url));
-const version = 'v0.26.0';
+const version = 'v0.28.0';
 const base = `/versions/${version}/`;
 const md = await createMarkdownRenderer(source, { config: (renderer) => renderer.use(flagVersionBadges).use(versionedLinks, version) }, base);
 const render = (text) => md.render(text, { path: path.join(source, 'docs/server-configuration.md') });
@@ -63,7 +63,7 @@ test('shared links are validated even when target=_self bypasses VitePress', () 
   const pages = collectSharedPages(source);
   assert.ok(pages.includes('contributing/adr/index.md'));
   assert.ok(!pages.some((page) => page.includes('[record]') || page.endsWith('/template.md')));
-  for (const version of ['', 'v0.26.0']) {
+  for (const version of ['', 'v0.28.0']) {
     const renderer = new md.constructor({ html: true }).use(versionedLinks, version, [], pages);
     assert.equal(renderer.render('[ADR](/contributing/adr/0004-govern-feature-lifecycles.md)', { relativePath: 'docs/experiments.md' }).includes('target="_self"'), Boolean(version));
     assert.throws(() => renderer.render('[Missing](/contributing/nonexistent.md)', { relativePath: 'docs/example.md' }), /Broken current-site link/);
@@ -116,7 +116,7 @@ test('plain and versioned VitePress builds reject missing shared pages', () => {
     writeFileSync(path.join(site, 'package.json'), '{"type":"module"}');
     const plugin = pathToFileURL(path.join(source, '.vitepress/versioning.mjs')).href;
     const inventory = pathToFileURL(path.join(source, '.vitepress/shared-pages.mjs')).href;
-    for (const version of ['', 'v0.26.0']) {
+    for (const version of ['', 'v0.28.0']) {
       writeFileSync(path.join(site, '.vitepress/config.js'), `import { versionedLinks } from ${JSON.stringify(plugin)};\nimport { collectSharedPages } from ${JSON.stringify(inventory)};\nexport default { base: ${JSON.stringify(version ? `/versions/${version}/` : '/')}, markdown: { config(md) { md.use(versionedLinks, ${JSON.stringify(version)}, [], collectSharedPages(${JSON.stringify(site)})); } } };\n`);
       writeFileSync(path.join(site, 'index.md'), '# Test\n\n[Missing](/contributing/nonexistent.md)\n');
       const result = spawnSync(process.execPath, [path.resolve(source, '../node_modules/vitepress/bin/vitepress.js'), 'build', site, '--outDir', path.join(directory, 'output')], { encoding: 'utf8' });
@@ -128,14 +128,6 @@ test('plain and versioned VitePress builds reject missing shared pages', () => {
   }
 });
 
-test('historical URL placeholders render as prose without becoming Vue elements', () => {
-  const html = render('Click **<organization>/Project Administrators** or **[<project>]/Project Administrators**.');
-  assert.ok(html.includes('&lt;organization&gt;'));
-  assert.ok(html.includes('&lt;project&gt;'));
-  assert.ok(!html.includes('<organization>'));
-  assert.ok(!html.includes('<project>'));
-});
-
 test('external links, same-page fragments, and code samples retain their meaning', () => {
   assert.ok(render('[External](https://example.com/docs/reference)').includes('href="https://example.com/docs/reference"'));
   assert.ok(render('[External](https://www.runatlantis.io.evil.example/docs/reference)').includes('www.runatlantis.io.evil.example'));
@@ -144,41 +136,18 @@ test('external links, same-page fragments, and code samples retain their meaning
   assert.equal(historicalLink('https://www.runatlantis.io/blog', version), 'https://www.runatlantis.io/blog');
 });
 
-test('old README links follow the generated index pages', () => {
-  assert.equal(historicalLink('README.md#example', version), 'index.md#example');
-  assert.equal(historicalLink('../guide/README.html', version), '../guide/index.html');
-  assert.equal(historicalLink('api-endpoints.md#post-apidriftdetect', version), 'api-endpoints.md#post-api-drift-detect');
-});
-
 test('root release compatibility applies to documentation and preserves current blog links', () => {
   const renderer = new md.constructor().use(versionedLinks, '');
-  const link = '[Guide](https://www.runatlantis.io/guide/README.html)';
-  assert.ok(renderer.render(link, { relativePath: 'docs/server-configuration.md' }).includes('href="/guide/index.html"'));
-  assert.ok(renderer.render(link, { relativePath: 'blog/2018/example.md' }).includes('href="https://www.runatlantis.io/guide/README.html"'));
-});
-
-test('legacy root landings keep relative links and images anchored to their original directory', () => {
-  const renderer = new md.constructor({ html: true }).use(versionedLinks, '');
-  const html = renderer.render('[Configuration](configuring-atlantis.html) ![Image](images/overview.png) <img src="images/diagram.png">', {
-    path: '/site/docs.md', realPath: '/site/docs/index.md', relativePath: 'docs.md',
-  });
-  assert.ok(html.includes('href="/docs/configuring-atlantis.html"'));
-  assert.ok(html.includes('src="/docs/images/overview.png"'));
-  assert.ok(html.includes('src="/docs/images/diagram.png"'));
+  const link = '[Guide](https://www.runatlantis.io/guide.html)';
+  assert.ok(renderer.render(link, { relativePath: 'docs/server-configuration.md' }).includes('href="/guide.html"'));
+  assert.ok(renderer.render(link, { relativePath: 'blog/2018/example.md' }).includes('href="https://www.runatlantis.io/guide.html"'));
 });
 
 test('current Spanish pages fall back to English documentation when a release has no translation', () => {
-  const renderer = new md.constructor().use(versionedLinks, '', [{ version, pages: ['docs/index.md', 'guide/index.md'] }]);
+  const renderer = new md.constructor().use(versionedLinks, '', [{ version, pages: ['docs.md', 'guide.md'] }]);
   const html = renderer.render('[Docs](./docs.md) [Guide](./guide.md)', { relativePath: 'es/contributing.md' });
   assert.ok(html.includes('href="/docs.md"'));
   assert.ok(html.includes('href="/guide.md"'));
-});
-
-test('directory-style links follow canonical legacy landing routes at the root', () => {
-  const renderer = new md.constructor({ html: true }).use(versionedLinks, '', [{ version, pages: ['docs/index.md', 'guide/index.md'] }]);
-  const html = renderer.render('[Guide](/guide/#overview) <a href="/docs/">Docs</a>', { relativePath: 'docs.md' });
-  assert.ok(html.includes('href="/guide.md#overview"'));
-  assert.ok(html.includes('href="/docs.html"'));
 });
 
 test('the sidebar omits pages that did not exist in a release', () => {
@@ -243,7 +212,7 @@ test('root pages preserve their edit actions and translated labels', async () =>
   const spanish = { ...english, text: 'Editar esta página en GitHub' };
   config.themeConfig.editLink = english;
   config.locales.es.themeConfig.editLink = spanish;
-  configureVersions(config, '', [{ version, pages: ['docs/index.md'] }], []);
+  configureVersions(config, '', [{ version, pages: ['docs.md'] }], []);
   assert.equal(config.themeConfig.editLink, english);
   assert.equal(config.locales.es.themeConfig.editLink, spanish);
   const page = { relativePath: 'contributing.md', filePath: 'contributing.md', frontmatter: {} };
@@ -251,23 +220,11 @@ test('root pages preserve their edit actions and translated labels', async () =>
   assert.equal(page.frontmatter.editLink, undefined);
 });
 
-test('root documentation navigation uses the release’s genuine landing page', () => {
-  const config = configuration();
-  config.locales.root.themeConfig.nav = [{ text: 'Docs', link: '/docs' }];
-  configureVersions(config, '', [{ version, pages: ['docs/index.md'] }], []);
-  assert.equal(config.locales.root.themeConfig.nav[0].link, '/docs');
-  assert.equal(config.rewrites['docs/index.md'], 'docs.md');
-  assert.equal(config.themeConfig.i18nRouting, false);
-  assert.deepEqual(versionTarget('docs.md', version, [{ version, pages: ['docs/index.md'] }]), { path: `${base}docs/`, missingPage: false });
-  assert.deepEqual(versionTarget('es/docs.md', version, [{ version, pages: ['docs/index.md'] }]), { path: `${base}docs/`, missingPage: false });
-});
-
 test('release source links use original files in every locale and hide generated pages', async () => {
   const sources = {
     'docs/server-configuration.md': 'docs/server-configuration.md',
     'es/docs/server-configuration.md': 'es/docs/server-configuration.md',
     'es/docs/experiments.md': 'docs/experiments.md',
-    'docs/index.md': 'docs/README.md',
   };
   const config = configureVersions(configuration(), version, [{ version, pages: Object.keys(sources) }], [], { sources: { [version]: sources } });
   for (const [relativePath, original] of Object.entries(sources)) {
@@ -394,18 +351,6 @@ test('switching versions preserves known pages and explicitly identifies unavail
   });
 });
 
-test('guide landing pages retain their route across historical index layouts', () => {
-  assert.deepEqual(versionTarget('guide.md', version, [{ version, pages: ['guide/index.md'] }]), {
-    path: `${base}guide/`, missingPage: false,
-  });
-  assert.deepEqual(versionTarget('guide/index.md', 'main', [{ version: 'main', pages: ['guide.md'] }]), {
-    path: '/versions/main/guide.html', missingPage: false,
-  });
-  assert.deepEqual(versionTarget('docs/experiments.md', 'main', [{ version: 'main', pages: ['docs/experiments.md'] }]), {
-    path: '/versions/main/docs/experiments.html', missingPage: false,
-  });
-});
-
 test('the build refuses to overwrite a directory it does not own', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'docs-output-check-'));
   try {
@@ -438,9 +383,32 @@ test('release discovery lists stable documentation tags without creating build o
     assert.equal(result.status, 0, result.stderr.toString());
     const versions = result.stdout.toString().trim().split('\n');
     assert.ok(versions.length > 3);
+    assert.ok(versions.includes(MIN_DOC_VERSION));
+    assert.ok(versions.every(isSupportedRelease));
+    assert.ok(!versions.includes('v0.27.0'));
     assert.ok(versions.every((tag) => /^v\d+\.\d+\.\d+$/.test(tag)));
     assert.deepEqual(versions, [...new Set(versions)].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })));
     assert.equal(existsSync(output), false);
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+});
+
+test('documentation support starts at v0.28.0 and includes future stable releases', () => {
+  for (const tag of ['v0.4.0', 'v0.27.0', 'v0.27.99', 'v0.28.0-rc.1', 'main', 'HEAD']) assert.equal(isSupportedRelease(tag), false, tag);
+  for (const tag of [MIN_DOC_VERSION, 'v0.28.2', 'v0.100.0', 'v1.0.0']) assert.equal(isSupportedRelease(tag), true, tag);
+});
+
+test('explicit requests below the release floor are rejected before writing output', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'docs-version-floor-'));
+  try {
+    const output = path.join(directory, 'site');
+    for (const version of ['v0.4.0', 'v0.27.0']) {
+      const result = spawnSync(process.execPath, [fileURLToPath(new URL('./build-versioned.mjs', import.meta.url)), '--versions', version, '--outDir', output]);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr.toString(), /documentation starts at v0\.28\.0/);
+      assert.equal(existsSync(output), false);
+    }
   } finally {
     rmSync(directory, { recursive: true });
   }

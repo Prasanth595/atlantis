@@ -24,7 +24,6 @@ export function historicalLink(href, version, rawHTML = false) {
     result = url.pathname + url.search + url.hash;
   }
   if (sharedSection.test(result)) return result.replace(/\.md(?=[?#]|$)/, '.html');
-  result = result.replace(/(^|\/)README\.(md|html)(?=[?#]|$)/, '$1index.$2');
   result = result.replace(/(api-endpoints\.(?:md|html))#post-apidriftdetect$/, '$1#post-api-drift-detect');
   if (rawHTML && result.startsWith('/') && !result.startsWith('//') && !result.startsWith(versionBase(version))) {
     result = versionBase(version) + result.slice(1);
@@ -39,14 +38,6 @@ export function versionedLinks(md, version, versions = [], sharedPages) {
     const rootRelease = !version && versions.find((entry) => entry.version !== 'main');
     const latest = rootRelease && relativePath.startsWith('es/') && rootRelease;
     if (!historical && !latest && !sharedPages) return;
-    const root = state.env.path?.slice(0, -relativePath.length);
-    const original = root && state.env.realPath?.startsWith(root) ? state.env.realPath.slice(root.length) : relativePath;
-    const moved = original.slice(0, original.lastIndexOf('/') + 1) !== relativePath.slice(0, relativePath.lastIndexOf('/') + 1);
-    function rebase(href) {
-      if (!moved || !href || /^(?:[a-z][a-z\d+.-]*:|\/|#|\?)/i.test(href)) return href;
-      const url = new URL(href, `https://docs.invalid/${original}`);
-      return url.pathname + url.search + url.hash;
-    }
     function rewriteLink(href, rawHTML = false) {
       if (latest && href) {
         const url = new URL(href, `https://docs.invalid/${relativePath}`);
@@ -55,13 +46,7 @@ export function versionedLinks(md, version, versions = [], sharedPages) {
           href = url.pathname.slice(3) + url.search + url.hash;
         }
       }
-      href = historical ? historicalLink(rebase(href), version, rawHTML) : href;
-      if (rootRelease && href) {
-        const url = new URL(href, `https://docs.invalid/${relativePath}`);
-        const landing = url.pathname.match(/^\/((?:es\/)?(?:docs|guide))\/(?:index\.(?:md|html))?$/);
-        if (url.hostname === 'docs.invalid' && landing && !rootRelease.pages.includes(`${landing[1]}.md`)
-          && rootRelease.pages.includes(`${landing[1]}/index.md`)) return `/${landing[1]}.${rawHTML ? 'html' : 'md'}${url.search}${url.hash}`;
-      }
+      href = historical ? historicalLink(href, version, rawHTML) : href;
       if (sharedPages) validateSharedLink(href, sharedPages, relativePath);
       return href;
     }
@@ -72,12 +57,8 @@ export function versionedLinks(md, version, versions = [], sharedPages) {
           token.attrSet('href', href);
           if (version && sharedSection.test(href)) token.attrSet('target', '_self');
         }
-        if (historical && token.type === 'image') token.attrSet('src', rebase(token.attrGet('src')));
         if (token.type === 'html_inline' || token.type === 'html_block') {
-          // Older Azure instructions used unescaped URL placeholders in prose.
-          if (historical) token.content = token.content.replace(/<(organization|project)>/g, '&lt;$1&gt;');
           token.content = token.content.replace(/\bhref=(['"])(.*?)\1/g, (_, quote, href) => `href=${quote}${rewriteLink(href, true)}${quote}`);
-          if (historical && moved) token.content = token.content.replace(/\bsrc=(['"])(.*?)\1/g, (_, quote, src) => `src=${quote}${rebase(src)}${quote}`);
         }
         if (token.children) rewrite(token.children);
       }
@@ -146,16 +127,10 @@ export function configureVersions(config, version, versions, sidebar, metadata =
   };
   if (!version) {
     if (latest && !latest.pages.some((page) => page.startsWith('es/docs/'))) config.themeConfig.i18nRouting = false;
-    for (const section of ['docs', 'guide', 'es/docs', 'es/guide']) {
-      if (latest && !latest.pages.includes(`${section}.md`) && latest.pages.includes(`${section}/index.md`)) {
-        config.rewrites = { ...config.rewrites, [`${section}/index.md`]: `${section}.md` };
-      }
-    }
-    const rootPages = latest?.pages.map((page) => config.rewrites?.[page] ?? page);
     if (latest) config.locales.root.themeConfig.sidebar = sidebar.flatMap((item) =>
-      sharedSection.test(item.link ?? '') ? [item] : historicalSidebar([item], rootPages));
+      sharedSection.test(item.link ?? '') ? [item] : historicalSidebar([item], latest.pages));
     if (latest && config.locales.es) config.locales.es.themeConfig.sidebar = config.locales.es.themeConfig.sidebar.flatMap((item) =>
-      sharedSection.test(item.link ?? '') ? [item] : historicalSidebar([item], rootPages));
+      sharedSection.test(item.link ?? '') ? [item] : historicalSidebar([item], latest.pages));
     return config;
   }
   const release = versions.find((entry) => entry.version === version);
@@ -171,14 +146,14 @@ export function configureVersions(config, version, versions, sidebar, metadata =
   };
   const spanish = config.locales.es;
   config.locales = { root: { label: 'English', lang: 'en-US', themeConfig: {
-    nav: [{ text: 'Documentation', link: release.pages.includes('docs.md') ? '/docs' : '/docs/' }],
+    nav: [{ text: 'Documentation', link: '/docs' }],
     sidebar: historicalSidebar(sidebar.filter((item) => !sharedSection.test(item.link ?? '')), release.pages),
   } } };
   if (spanish && release.pages.some((page) => page.startsWith('es/docs/'))) {
     config.locales.es = { ...spanish, themeConfig: {
       ...spanish.themeConfig,
       editLink: config.themeConfig.editLink,
-      nav: [{ text: 'Documentación', link: release.pages.includes('es/docs.md') ? '/es/docs' : '/es/docs/' }],
+      nav: [{ text: 'Documentación', link: '/es/docs' }],
       sidebar: historicalSidebar(spanish.themeConfig.sidebar.filter((item) => !sharedSection.test(item.link ?? '')), release.pages),
       sharedSidebar: spanish.themeConfig.sidebar.filter((item) => sharedSection.test(item.link ?? '')),
     } };
@@ -198,12 +173,7 @@ export function versionTarget(relativePath, version, versions) {
   const pages = versions.find((entry) => entry.version === version)?.pages;
   if (!pages?.includes(relativePath) && relativePath.startsWith('es/')) {
     const english = relativePath.slice(3);
-    if (pages?.includes(english) || pages?.includes(english.replace(/\.md$/, '/index.md'))) relativePath = english;
-  }
-  const landing = relativePath.match(/^((?:es\/)?(?:docs|guide))(\/index)?\.md$/);
-  if (!pages?.includes(relativePath) && landing) {
-    const alternate = landing[2] ? `${landing[1]}.md` : `${landing[1]}/index.md`;
-    if (pages?.includes(alternate)) relativePath = alternate;
+    if (pages?.includes(english)) relativePath = english;
   }
   const missingPage = Boolean(version && !pages?.includes(relativePath));
   const page = missingPage ? 'docs/server-configuration.md' : relativePath;

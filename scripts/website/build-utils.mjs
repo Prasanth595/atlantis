@@ -2,6 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { cpSync } from 'node:fs';
 import path from 'node:path';
 
+export const MIN_DOC_VERSION = 'v0.28.0';
+
+export function isSupportedRelease(tag) {
+  return /^v\d+\.\d+\.\d+$/.test(tag)
+    && tag.localeCompare(MIN_DOC_VERSION, undefined, { numeric: true }) >= 0;
+}
+
 export function includeThemeFile(root, source) {
   const relative = path.relative(root, source).split(path.sep).join('/');
   return !/^(dist|cache)(\/|$)/.test(relative) && !/config\.ts\.timestamp-/.test(relative);

@@ -1,9 +1,9 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gitLastUpdated, includeThemeFile, mergePublicAssets } from './build-utils.mjs';
+import { MIN_DOC_VERSION, gitLastUpdated, includeThemeFile, isSupportedRelease, mergePublicAssets } from './build-utils.mjs';
 import { collectSharedPages } from '../../runatlantis.io/.vitepress/shared-pages.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -25,7 +25,7 @@ if (existsSync(output) && readdirSync(output).length && !existsSync(outputMarker
   throw new Error('output directory is not an existing versioned documentation build; choose an empty directory');
 }
 const git = (...argv) => execFileSync('git', argv, { cwd: repo, maxBuffer: 128 * 1024 * 1024 });
-const stable = git('tag', '--list', 'v*').toString().trim().split('\n').filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag));
+const stable = git('tag', '--list', 'v*').toString().trim().split('\n').filter(isSupportedRelease);
 stable.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
 const objects = execFileSync('git', ['cat-file', '--batch-check=%(objecttype)'], {
   cwd: repo, input: stable.map((tag) => `${tag}:runatlantis.io/docs/server-configuration.md`).join('\n') + '\n',
@@ -44,6 +44,7 @@ const tags = requested?.length === 1 && requested[0] === 'all' ? available : req
 }).slice(0, 3);
 if (!tags.length || new Set(tags).size !== tags.length) throw new Error('select at least one distinct release tag');
 for (const tag of tags) {
+  if (/^v\d+\.\d+\.\d+$/.test(tag) && !isSupportedRelease(tag)) throw new Error(`documentation starts at ${MIN_DOC_VERSION}; unsupported release tag: ${tag}`);
   if (!/^v\d+\.\d+\.\d+$/.test(tag) || !available.includes(tag)) throw new Error(`release tag is not available locally with configuration documentation: ${tag}`);
 }
 tags.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
@@ -55,14 +56,6 @@ function pagesIn(directory, prefix = '') {
     const relative = path.posix.join(prefix, entry.name);
     return entry.isDirectory() ? pagesIn(path.join(directory, entry.name), relative) : relative.endsWith('.md') ? [relative] : [];
   });
-}
-function normalizeReadmes(directory) {
-  if (!existsSync(directory)) return;
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const filename = path.join(directory, entry.name);
-    if (entry.isDirectory()) normalizeReadmes(filename);
-    else if (entry.name === 'README.md' && !existsSync(path.join(directory, 'index.md'))) renameSync(filename, path.join(directory, 'index.md'));
-  }
 }
 const snapshots = [];
 const folders = ['docs', 'guide', 'logs', 'hosting', 'terraform', 'public', 'es/docs', 'es/guide'];
@@ -83,27 +76,12 @@ try {
     for (const folder of folders) {
       if (existsSync(path.join(historical, folder))) cpSync(path.join(historical, folder), path.join(site, folder), { recursive: true });
     }
-    for (const folder of ['.vuepress/public', '.vitepress/public']) {
-      if (existsSync(path.join(historical, folder))) cpSync(path.join(historical, folder), path.join(site, 'public'), { recursive: true });
-    }
     for (const file of landingPages) {
       if (existsSync(path.join(historical, file))) cpSync(path.join(historical, file), path.join(site, file));
     }
-    if (!existsSync(path.join(site, 'public'))) cpSync(path.join(repo, 'runatlantis.io/public'), path.join(site, 'public'), { recursive: true });
-    const originals = pagesIn(site);
-    for (const folder of ['docs', 'guide', 'logs', 'hosting', 'es/docs', 'es/guide']) normalizeReadmes(path.join(site, folder));
-    const sources = Object.fromEntries(originals.map((file) => [
-      existsSync(path.join(site, file)) ? file : file.replace(/(^|\/)README\.md$/, '$1index.md'), file,
-    ]));
-    const configPages = [
-      ['Server configuration', 'server-configuration'],
-      ['Server-side repository configuration', 'server-side-repo-config'],
-      ['Repository configuration', 'repo-level-atlantis-yaml'],
-      ['Repository configuration', 'atlantis-yaml-reference'],
-    ].filter(([, page]) => existsSync(path.join(site, `docs/${page}.md`)));
-    const overview = `# Atlantis ${version} configuration\n\nRelease snapshot.\n\n${configPages.map(([label, page]) => `- [${label}](/docs/${page}.md)\n`).join('')}`;
-    writeFileSync(path.join(site, 'index.md'), overview);
-    if (!existsSync(path.join(site, 'docs.md')) && !existsSync(path.join(site, 'docs/index.md'))) writeFileSync(path.join(site, 'docs.md'), overview);
+    const sources = Object.fromEntries(pagesIn(site).map((file) => [file, file]));
+    cpSync(path.join(site, 'docs.md'), path.join(site, 'index.md'));
+    sources['index.md'] = 'docs.md';
     if (existsSync(path.join(site, 'es/docs'))) {
       // Keep language-menu routes valid when a release has partial translations.
       for (const folder of ['docs', 'guide']) {
@@ -117,9 +95,8 @@ try {
           if (original) sources[`es/${folder}/${page}`] = original;
         }
       }
-      const translatedOverview = `# Configuración de Atlantis ${version}\n\n${configPages.map(([label, page]) => `- [${label}](${existsSync(path.join(site, `es/docs/${page}.md`)) ? '/es/docs/' : '/docs/'}${page}.md)\n`).join('')}`;
-      writeFileSync(path.join(site, 'es/index.md'), translatedOverview);
-      if (!existsSync(path.join(site, 'es/docs.md')) && !existsSync(path.join(site, 'es/docs/index.md'))) writeFileSync(path.join(site, 'es/docs.md'), translatedOverview);
+      cpSync(path.join(site, 'es/docs.md'), path.join(site, 'es/index.md'));
+      sources['es/index.md'] = 'es/docs.md';
     }
     symlinkSync(path.join(repo, 'node_modules'), path.join(site, 'node_modules'), 'dir');
     writeFileSync(path.join(site, 'package.json'), '{"type":"module"}\n');

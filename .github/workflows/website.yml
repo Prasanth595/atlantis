@@ -131,7 +131,7 @@ jobs:
           npm run website:test:adrs
           npm run website:test:versioned
           npm run website:build -- --outDir /tmp/atlantis-normal-docs
-          npm run website:build:versioned -- --versions v0.4.0,v0.26.0,v0.48.0 --outDir /tmp/atlantis-versioned-docs
+          npm run website:build:versioned -- --versions v0.28.0,v0.40.0,v0.48.0 --outDir /tmp/atlantis-versioned-docs
 
           # start http-server for integration testing
           python3 -m http.server 8080 --directory /tmp/atlantis-normal-docs &
